@@ -1,10 +1,10 @@
-(ns eginez.huckleberry.core
+(ns thisdotrob.huckleberry.core
   (:require-macros [cljs.core.async.macros :refer [go-loop go]])
   (:refer-clojure :exclude  [type proxy])
   (:require [cljs.nodejs :as nodejs]
             [cljs.core.async :refer [timeout close! put! chan <! >! take!  pipeline alts! poll!] :as async]
             [clojure.set :as set]
-            [eginez.huckleberry.os :as os]
+            [thisdotrob.huckleberry.os :as os]
             [clojure.string :as str]))
 
 (def default-repos {:clojars "https://clojars.org/repo"
@@ -51,10 +51,37 @@
 (defn clean-deps [x]
   (let [ y (remove #(or
                      (= "test" (first (:scope %)))
-                     (= "true" (first (:optional %))))
+                     (= "true" (first (:optional %)))
+                     (nil? (:version %)))
                    x)]
     y))
 
+(defn extract-deps [{:keys [project] :as parsed-xml}]
+  (let [properties-lookup (->> project
+                               :properties
+                               first
+                               (map (fn [[k v]] [k (first v)]))
+                               (into {}))
+        parent (->> project :parent first)
+        dependencies (->> project
+                          :dependencies
+                          first
+                          :dependency
+                          (map (fn [dep]
+                                 (->> dep
+                                      (map (fn [[k v]]
+                                             (let [match (re-find #"^\$\{(.*)\}"
+                                                                  (str (first v)))]
+                                               (if match
+                                                 [k [(-> match
+                                                         second
+                                                         keyword
+                                                         properties-lookup)]]
+                                                 [k v]))))
+                                      (into {})))))]
+    (if parent
+      (conj dependencies parent)
+      dependencies)))
 
 (defn read-dependency-pipeline [url-set]
   "Creates a read depedency pipeline that extracts maven dependecy from a url-set
@@ -64,7 +91,7 @@
         c (chan 1 (comp
                     (map os/parse-xml)
                     (map #(js->clj % :keywordize-keys true))
-                    (map #(get-in % [:project :dependencies 0 :dependency]))
+                    (map extract-deps)
                     (map clean-deps)
                     (map #(map mvndep->dep %))
                     (map #(into #{} %))
@@ -106,7 +133,9 @@
                    (do
                      (map close! to-kill)
                      (recur (first new-dep) (rest new-dep) done new-locations exclusions true))
-                   (recur nil nil next [] [] false))))
+                   (do
+                     (println "failed on" next)
+                     (recur nil nil next [] [] false)))))
              [status done locations])))
 
 (defn resolve-all [all-deps & opts]
@@ -210,3 +239,7 @@
       (if retrieve
         (<!(retrieve-dependencies deps-chan l-repo offline?))
         deps-chan))))
+
+(defn doit []
+  (go (<! (resolve-dependencies :retrieve false
+                                :coordinates [['day8.re-frame/http-fx "0.1.6"]]))))

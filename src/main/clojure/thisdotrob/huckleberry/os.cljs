@@ -1,4 +1,4 @@
-(ns eginez.huckleberry.os
+(ns thisdotrob.huckleberry.os
   (:require-macros [cljs.core.async.macros :refer [go-loop go]])
   (:refer-clojure :exclude  [type proxy])
   (:require [cljs.nodejs :as nodejs]
